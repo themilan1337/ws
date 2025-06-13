@@ -1,0 +1,60 @@
+@import 'tailwindcss';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+@source '../**/*.blade.php';
+@source '../**/*.js';
+
+@theme {
+    --font-sans: 'SF Pro Display', 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+        'Segoe UI Symbol', 'Noto Color Emoji';
+    
+    /* Meditation-themed colors */
+    --color-meditation-purple: #6B46C1;
+    --color-meditation-lavender: #A78BFA;
+    --color-meditation-sage: #84CC16;
+    --color-meditation-mint: #10B981;
+    --color-meditation-cream: #FEF3C7;
+    --color-meditation-soft-blue: #3B82F6;
+    --color-meditation-deep-purple: #4C1D95;
+    --color-meditation-light-purple: #EDE9FE;
+    
+    /* Custom gradients */
+    --gradient-meditation: linear-gradient(135deg, var(--color-meditation-purple), var(--color-meditation-lavender));
+    --gradient-hero: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+/* Custom animations */
+@keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-20px); }
+}
+
+@keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 20px rgba(107, 70, 193, 0.3); }
+    50% { box-shadow: 0 0 40px rgba(107, 70, 193, 0.6); }
+}
+
+.float-animation {
+    animation: float 6s ease-in-out infinite;
+}
+
+.pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Smooth scrolling */
+html {
+    scroll-behavior: smooth;
+}
+
+/* Custom button styles */
+.btn-meditation {
+    background: var(--gradient-meditation);
+    transition: all 0.3s ease;
+}
+
+.btn-meditation:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px rgba(107, 70, 193, 0.3);
+}

@@ -1,0 +1,64 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Dependencies
+node_modules
+vendor
+
+# Development files
+.env.example
+README.md
+.editorconfig
+phpunit.xml
+
+# Testing
+tests
+
+# Development tools
+.vscode
+.idea
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Laravel specific
+storage/app/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/logs/*
+!storage/app/.gitignore
+!storage/framework/.gitignore
+!storage/framework/cache/.gitignore
+!storage/framework/sessions/.gitignore
+!storage/framework/views/.gitignore
+!storage/logs/.gitignore
+
+# Build artifacts
+public/hot
+public/storage
+
+# Package files
+package-lock.json
+composer.lock
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Docker files (don't copy into container)
+Dockerfile
+.dockerignore
+docker-compose.yml
