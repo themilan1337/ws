@@ -1,236 +1,94 @@
-# Multi-stage build for production optimization
-FROM node:20-alpine AS node-builder
+# Используем официальный образ PHP с Apache
+FROM php:8.2-apache
 
-# Set working directory
-WORKDIR /app
-
-# Copy package files
-COPY package*.json ./
-
-# Install dependencies
-RUN npm ci --only=production
-
-# Copy source files
-COPY resources/ ./resources/
-COPY vite.config.js ./
-COPY tailwind.config.js ./
-
-# Build assets
-RUN npm run build
-
-# PHP Production Stage
-FROM php:8.3-fpm-alpine AS php-base
-
-# Install system dependencies
-RUN apk add --no-cache \
-    nginx \
-    supervisor \
-    sqlite \
-    zip \
-    unzip \
+# Устанавливаем системные зависимости
+RUN apt-get update && apt-get install -y \
     git \
     curl \
     libpng-dev \
-    libjpeg-turbo-dev \
-    freetype-dev \
-    && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install -j$(nproc) gd pdo pdo_sqlite opcache
+    libonig-dev \
+    libxml2-dev \
+    libzip-dev \
+    zip \
+    unzip \
+    sqlite3 \
+    libsqlite3-dev \
+    nodejs \
+    npm \
+    && docker-php-ext-install pdo_mysql pdo_sqlite mbstring exif pcntl bcmath gd zip \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install Composer
+# Устанавливаем Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# Set working directory
+# Включаем Apache mod_rewrite
+RUN a2enmod rewrite
+
+# Настраиваем рабочую директорию
 WORKDIR /var/www/html
 
-# Copy composer files
+# Копируем файлы composer и устанавливаем PHP зависимости
 COPY composer.json composer.lock ./
+RUN composer install --no-dev --optimize-autoloader --no-scripts --no-interaction
 
-# Install PHP dependencies (production only)
-RUN composer install --no-dev --optimize-autoloader --no-interaction --no-progress --prefer-dist
+# Копируем package.json и устанавливаем Node.js зависимости
+COPY package.json package-lock.json ./
+RUN npm ci --only=production --silent
 
-# Copy application files
+# Копируем все файлы проекта
 COPY . .
 
-# Copy built assets from node stage
-COPY --from=node-builder /app/public/build ./public/build
+# Завершаем установку composer зависимостей
+RUN composer dump-autoload --optimize
 
-# Set proper permissions
+# Устанавливаем права доступа
 RUN chown -R www-data:www-data /var/www/html \
     && chmod -R 755 /var/www/html/storage \
     && chmod -R 755 /var/www/html/bootstrap/cache
 
-# Create SQLite database file with proper permissions
-RUN touch /var/www/html/database/database.sqlite \
+# Создаем директорию для SQLite базы данных
+RUN mkdir -p /var/www/html/database \
+    && touch /var/www/html/database/database.sqlite \
     && chown www-data:www-data /var/www/html/database/database.sqlite \
     && chmod 664 /var/www/html/database/database.sqlite
 
-# Configure PHP-FPM
-RUN echo "[www]" > /usr/local/etc/php-fpm.d/www.conf \
-    && echo "user = www-data" >> /usr/local/etc/php-fpm.d/www.conf \
-    && echo "group = www-data" >> /usr/local/etc/php-fpm.d/www.conf \
-    && echo "listen = 127.0.0.1:9000" >> /usr/local/etc/php-fpm.d/www.conf \
-    && echo "listen.owner = www-data" >> /usr/local/etc/php-fpm.d/www.conf \
-    && echo "listen.group = www-data" >> /usr/local/etc/php-fpm.d/www.conf \
-    && echo "pm = dynamic" >> /usr/local/etc/php-fpm.d/www.conf \
-    && echo "pm.max_children = 20" >> /usr/local/etc/php-fpm.d/www.conf \
-    && echo "pm.start_servers = 2" >> /usr/local/etc/php-fpm.d/www.conf \
-    && echo "pm.min_spare_servers = 1" >> /usr/local/etc/php-fpm.d/www.conf \
-    && echo "pm.max_spare_servers = 3" >> /usr/local/etc/php-fpm.d/www.conf
+# Копируем .env файл из примера если .env не существует
+RUN if [ ! -f .env ]; then cp .env.example .env; fi
 
-# Configure PHP for production
-RUN echo "opcache.enable=1" >> /usr/local/etc/php/conf.d/opcache.ini \
-    && echo "opcache.memory_consumption=128" >> /usr/local/etc/php/conf.d/opcache.ini \
-    && echo "opcache.interned_strings_buffer=8" >> /usr/local/etc/php/conf.d/opcache.ini \
-    && echo "opcache.max_accelerated_files=4000" >> /usr/local/etc/php/conf.d/opcache.ini \
-    && echo "opcache.revalidate_freq=2" >> /usr/local/etc/php/conf.d/opcache.ini \
-    && echo "opcache.fast_shutdown=1" >> /usr/local/etc/php/conf.d/opcache.ini \
-    && echo "opcache.validate_timestamps=0" >> /usr/local/etc/php/conf.d/opcache.ini
+# Генерируем ключ приложения
+RUN php artisan key:generate --force
 
-# Configure Nginx
-COPY <<EOF /etc/nginx/nginx.conf
-user www-data;
-worker_processes auto;
-pid /run/nginx.pid;
-error_log /var/log/nginx/error.log warn;
+# Создаем символическую ссылку для storage
+RUN php artisan storage:link
 
-events {
-    worker_connections 1024;
-    use epoll;
-    multi_accept on;
-}
+# Запускаем миграции
+RUN php artisan migrate --force
 
-http {
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-    
-    # Logging
-    log_format main '\$remote_addr - \$remote_user [\$time_local] "\$request" '
-                    '\$status \$body_bytes_sent "\$http_referer" '
-                    '"\$http_user_agent" "\$http_x_forwarded_for"';
-    access_log /var/log/nginx/access.log main;
-    
-    # Performance
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-    keepalive_timeout 65;
-    types_hash_max_size 2048;
-    client_max_body_size 20M;
-    
-    # Gzip compression
-    gzip on;
-    gzip_vary on;
-    gzip_min_length 1024;
-    gzip_proxied any;
-    gzip_comp_level 6;
-    gzip_types
-        text/plain
-        text/css
-        text/xml
-        text/javascript
-        application/json
-        application/javascript
-        application/xml+rss
-        application/atom+xml
-        image/svg+xml;
-    
-    server {
-        listen 80;
-        server_name _;
-        root /var/www/html/public;
-        index index.php;
-        
-        # Security headers
-        add_header X-Frame-Options "SAMEORIGIN" always;
-        add_header X-Content-Type-Options "nosniff" always;
-        add_header X-XSS-Protection "1; mode=block" always;
-        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-        
-        # Static files caching
-        location ~* \.(jpg|jpeg|png|gif|ico|css|js|woff|woff2|ttf|svg)\$ {
-            expires 1y;
-            add_header Cache-Control "public, immutable";
-            access_log off;
-        }
-        
-        # Laravel routes
-        location / {
-            try_files \$uri \$uri/ /index.php?\$query_string;
-        }
-        
-        # PHP-FPM
-        location ~ \.php\$ {
-            fastcgi_pass 127.0.0.1:9000;
-            fastcgi_index index.php;
-            fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
-            include fastcgi_params;
-            fastcgi_hide_header X-Powered-By;
-        }
-        
-        # Deny access to sensitive files
-        location ~ /\. {
-            deny all;
-        }
-        
-        location ~ /(storage|bootstrap/cache) {
-            deny all;
-        }
-    }
-}
-EOF
+# Собираем фронтенд ресурсы
+RUN npm run build
 
-# Configure Supervisor
-COPY <<EOF /etc/supervisor/conf.d/supervisord.conf
-[supervisord]
-nodaemon=true
-user=root
-logfile=/var/log/supervisor/supervisord.log
-pidfile=/var/run/supervisord.pid
+# Удаляем node_modules после сборки для уменьшения размера образа
+RUN rm -rf node_modules
 
-[program:php-fpm]
-command=php-fpm
-autostart=true
-autorestart=true
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
+# Настраиваем Apache Virtual Host
+RUN echo '<VirtualHost *:80>\n\
+    DocumentRoot /var/www/html/public\n\
+    <Directory /var/www/html/public>\n\
+        AllowOverride All\n\
+        Require all granted\n\
+    </Directory>\n\
+    ErrorLog ${APACHE_LOG_DIR}/error.log\n\
+    CustomLog ${APACHE_LOG_DIR}/access.log combined\n\
+</VirtualHost>' > /etc/apache2/sites-available/000-default.conf
 
-[program:nginx]
-command=nginx -g "daemon off;"
-autostart=true
-autorestart=true
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
-EOF
+# Очищаем кеш
+RUN php artisan config:cache \
+    && php artisan route:cache \
+    && php artisan view:cache
 
-# Create startup script
-COPY <<EOF /usr/local/bin/start.sh
-#!/bin/sh
-set -e
-
-# Run Laravel optimizations
-php artisan config:cache
-php artisan route:cache
-php artisan view:cache
-
-# Run migrations
-php artisan migrate --force
-
-# Start supervisor
-exec supervisord -c /etc/supervisor/conf.d/supervisord.conf
-EOF
-
-RUN chmod +x /usr/local/bin/start.sh
-
-# Expose port
+# Открываем порт 80
 EXPOSE 80
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost/ || exit 1
-
-# Start the application
-CMD ["/usr/local/bin/start.sh"]
+# Запускаем Apache
+CMD ["apache2-foreground"]
